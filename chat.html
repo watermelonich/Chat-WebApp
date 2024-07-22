@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <title>Chat Application in Node.js with MongoDB using Vanilla JavaScript</title>
+
+    <!-- Bootstrap core CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">    
+
+</head>
+
+<body>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-sm-4 col-md-3 vh-100 bg-light border-end">
+                <div class="mt-4 mb-4 text-center">
+                    <span id="login_user_image"></span>
+                    <div class="mt-3 mb-3" id="login_user_name"></div>
+                    <div class="text-center mt-3 mb-3">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="makeSettingPage()">Setting</button>
+                        <button type="button" class="btn btn-primary btn-sm" onclick="logout()">Logout</button>
+                    </div>
+                </div>
+                <hr class="bg-secondary border-2 border-top border-secondary">
+                <div class="mt-4 mb-4 overflow-auto">
+                    <h6 class="border-bottom pb-2 mb-0">Connected People</h6>
+                    <div id="connected_people_area"></div>
+                </div>
+            </div>
+            <div class="col-sm-4 col-md-6 vh-100">
+                <div id="chat_area">
+                    <h3>Welcome into Chat Application</h3>
+                </div>
+            </div>
+            <div class="col-sm-4 col-md-3 vh-100 bg-light border-start">
+                <div class="pt-4 pb-4 h-50 overflow-auto">
+                    <h6 class="mb-3">Search People</h6>
+                    <input type="text" name="search_user" oninput="search_user(this)" class="form-control" />
+                    <div id="search_people_area" class="mt-3"></div>
+                </div>
+                <div class="pt-4 pb-4 h-50 overflow-auto">
+                    <h6 class="mb-3">Notification</h6>
+                    <div id="notification_area" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+
+</html>
+
+<script>
+
+let userData;
+
+
+let loginUserName = document.getElementById('login_user_name');
+let loginUserImage = document.getElementById('login_user_image');
+let chatAreaElement = document.getElementById('chat_area');
+let last_chat_datetime;
+let interval;
+
+const token = localStorage.getItem('token');
+
+if(!token){
+    window.location.href = '/';
+} else {
+    setUserData();
+}
+
+let search_people_area = document.getElementById('search_people_area');
+
+async function setUserData(){
+    fetch('/setUserData', {
+        headers : {
+            'Authorization' : token
+        }
+    })
+    .then(response => {
+        return response.json();
+    })
+    .then(async data => {
+        userData = data.user;
+        document.getElementById('login_user_name').textContent = userData.first_name;
+        document.getElementById('login_user_image').innerHTML = `<img src="uploads/${userData.image}" class="img-fluid img-thumbnail rounded-circle" width="150" />`;
+        await loadChatRequest();
+        await loadConnectedUser();
+    });
+}
+
+async function logout(){
+    //Remove the JWT token from localStorage
+
+    localStorage.removeItem('token');
+
+    let formData = {
+        userId : userData._id
+    };
+
+    const response = await fetch(`/logout`, {
+        method : 'POST',
+        headers : {
+            'Content-Type' : 'application/json'
+        },
+        body : JSON.stringify(formData)
+    });
+
+    // Parse the response JSON
+    const data = await response.json();
+
+    if(data.success){
+        // Redirect user to login page
+        window.location.href = '/';
+    }
+}
+
+function makeSettingPage()
+{
+    let html = `
+    <div class="row vh-100 align-items-center justify-content-center">
+        <div class="col col-sm-8 align-self-center">
+            <span id="msgArea"></span>
+            <form class="p-4 p-md-5 border rounded-3 bg-light" id="settingForm" method="post" enctype="multipart/form-data">
+                <button type="button" class="btn-close float-end" onclick="clearChatArea()" aria-label="Close"></button>
+                <h1 class="display-6 fw-bold mb-4 text-center">Setting</h1>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-floating mb-3">
+                            <input type="text" name="first_name" id="first_name" class="form-control" value="${userData.first_name}" />
+                            <label for="first_name">First Name</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-floating mb-3">
+                            <input type="text" name="last_name" id="last_name" class="form-control" value="${userData.last_name}" />
+                            <label for="last_name">Last Name</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-floating mb-3">
+                    <input type="email" name="email" id="email" class="form-control" value="${userData.email}" />
+                    <label for="email">Email address</label>
+                </div>
+                <div class="mb-3">
+                    <input type="file" name="image" id="image" accept="image/x-png,image/gif,image/jpeg,image/jpg" />
+                    <input type="hidden" name="hidden_image" id="hidden_image" value="${userData.image}" />
+                    <span id="userUploadedImage">
+                        <img src="uploads/${userData.image}" class="img-fluid img-thumbnail width="100" />
+                    </span>
+                </div>
+                <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+            </form>
+        </div>
+    </div>
+    `;
+    document.getElementById('chat_area').innerHTML = html;
+}
+
+function clearChatArea()
+{
+    document.getElementById('chat_area').innerHTML = '';
+}
+
+document.addEventListener('submit', async function(event) {
+    const form = event.target;
+
+    if(form && form.id === 'settingForm'){
+        event.preventDefault();
+
+        const formData = new FormData(form);
+
+        const response = await fetch(`/setting/${userData._id}`, {
+            method : 'PUT',
+            body : formData
+        });
+
+        // Parse the response JSON
+        const data = await response.json();
+        let messageAreaElement = document.getElementById('msgArea');
+        let userUploadedImage = document.getElementById('userUploadedImage');
+        if(data.errors){
+            // Handle validation errors
+            let validationError = data.errors;
+            if(validationError.length > 0){
+                let html = `<div class="alert alert-danger">`;
+                for(let count = 0; count < validationError.length; count++){
+                    html += validationError[count] + `<br />`;
+                }
+                html += `</div>`;
+                messageAreaElement.innerHTML = html;
+            }
+        } else {
+            messageAreaElement.innerHTML = `<div class="alert alert-success">${data.message}</div>`;
+            userUploadedImage.innerHTML = `<img src="uploads/${data.image}" class="img-fluid img-thumbnail width="100" />`;
+            loginUserName.innerHTML = data.name;
+            loginUserImage.innerHTML = userUploadedImage.innerHTML;
+        }
+    }
+
+});
+
+async function search_user(element)
+{
+    let searchQuery = element.value;
+    let id = userData._id;
+    let html = '';
+    if(searchQuery.length > 2){
+        let checkData = { searchQuery, id };
+        const response = await fetch('/searchUser', {
+            method : 'POST',
+            headers : {
+                'Content-Type' : 'application/json'
+            },
+            body : JSON.stringify(checkData)
+        });
+        const data = await response.json();
+
+        if(data.length > 0){
+            for(let count = 0; count < data.length; count++){
+                html += `
+                <a href="#" class="list-group-item list-group-item-action user-list-item">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center">
+                            <img src="uploads/${data[count].image}" alt="User Image" class="rounded-circle me-3" style="width: 50px;" />
+                            <div>
+                                <h5 class="mb-1">${data[count].first_name} ${data[count].last_name}</h5>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-primary btn-sm" onclick="sendRequest(this, '${data[count].id}');">Connect</button>
+                    </div>
+                </a>
+                `;
+            }
+        } else {
+            html = '<strong class="text-gray-dark">No User Found</strong>';
+        }
+
+    } else {
+        html = `<strong class="text-gray-dark">No User Found</strong>`;
+    }
+
+    search_people_area.innerHTML = html;
+}
+
+async function sendRequest(element, receiverUserId){
+    element.disabled = true;
+    let formData = {
+        receiver_user_id : receiverUserId,
+        sender_user_id : userData._id
+    };
+    const response = await fetch('/sendRequest', {
+        method : 'POST',
+        headers : {
+            'Content-Type' : 'application/json'
+        },
+        body : JSON.stringify(formData)
+    });
+    const data = await response.json();
+
+    if(data.message){
+        element.disabled = false;
+        element.classList.add('btn-success');
+        element.classList.remove('btn-primary');
+        element.innerHTML = data.message;
+    }
+}
+
+async function loadChatRequest(){
+    let formData = {
+        receiver_user_id : userData._id
+    };
+
+    let html = '';
+
+    const response = await fetch(`/loadChatRequest`, {
+        method : 'POST',
+        headers : {
+            'Content-Type' : 'application/json'
+        },
+        body : JSON.stringify(formData)
+    });
+
+    const data = await response.json();
+
+    if(data.length > 0){
+        for(var count = 0; count < data.length; count++){
+            html += `
+            <a href="#" class="list-group-item list-group-item-action user-list-item">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center">
+                        <img src="uploads/${data[count].image}" alt="User Image" class="rounded-circle me-3" style="width: 50px;" />
+                        <div>
+                            <h5 class="mb-1">${data[count].first_name} ${data[count].last_name}</h5>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="acceptRequest(this, '${data[count].chat_request_id}');">Accept</button>
+                </div>                
+            </a>
+            `;
+        }
+    } else {
+        html = `<strong class="text-gray-dark">No Notification Found</strong>`;
+    }
+
+    document.getElementById('notification_area').innerHTML = html;
+}
+
+async function acceptRequest(element, chatRequestId){
+    element.disabled = true;
+    const response = await fetch(`acceptRequest/${chatRequestId}`, {
+        method : 'PUT'
+    });
+
+    const data = await response.json();
+
+    if(data.success){
+        element.classList.add('btn-success');
+        element.classList.remove('btn-primary');
+        element.innerHTML = 'Accepted';
+    }
+}
+
+async function loadConnectedUser(){
+    let formData = {
+        user_id : userData._id
+    };
+    let html = '';
+    const response = await fetch(`/loadConnectedUser`, {
+        method : 'POST',
+        headers : {
+            'Content-Type' : 'application/json'
+        },
+        body : JSON.stringify(formData)
+    });
+
+    const data = await response.json();
+
+    if(data.length > 0){
+        for(let count = 0; count < data.length; count++){
+            html += `
+            <a href="#" class="list-group-item list-group-item-action user-list-item">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center">
+                        <img src="uploads/${data[count].image}" alt="User Image" class="rounded-circle me-3" style="width: 50px;" />
+                        <div>
+                            <h5 class="mb-1">${data[count].first_name} ${data[count].last_name}</h5>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="startChat('${data[count].id}', '${data[count].first_name}');">Start Chat</button>
+                </div>
+            </a>
+            `;
+        }
+    } else {
+        html += `<strong class="text-gray-dark">No People Found</strong>`;
+    }
+    document.getElementById('connected_people_area').innerHTML = html;
+}
+
+async function startChat(receiverUserId, first_name){
+    await resetChatArea();
+    let html = `
+    <div id="chat_msg_area" class="pt-2 pb-2" style="height: 88vh;">
+        <div class="card h-100">
+            <div class="card-header">
+                <div class="row">
+                    <div class="col">${first_name}</div>
+                    <div class="col">
+                        <button type="button" class="btn btn-danger btn-sm float-end" onclick="resetChatArea();">Close</button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body overflow-auto" id="chat_conversion"></div>
+        </div>
+    </div>
+    <div class="row align-items-end" style="height: 10vh;">
+        <div class="col mb-1">
+            <div class="input-group">
+                <textarea rows="4" name="type_chat_message" id="type_chat_message" class="form-control"></textarea>
+                <button type="button" class="btn btn-success" onclick="sendChat(this, '${receiverUserId}')">Send</button>
+            </div>
+        </div>
+    </div>
+    `;
+    chatAreaElement.innerHTML = html;
+    fetchChatData(receiverUserId);
+
+    interval = setInterval(function(){
+        fetchChatData(receiverUserId);
+    }, 5000);
+
+}
+
+async function resetChatArea(){
+    let html = '<div class="row vh-100 align-items-center justify-content-center text-muted fw-bold">Select People for chat</div>';
+    chatAreaElement.innerHTML = html;
+    clearInterval(interval);
+    last_chat_datetime = '';
+}
+
+async function sendChat(element, receiver_user_id){
+    let chat_message_element = document.getElementById('type_chat_message');
+    let chat_message = chat_message_element.value;
+    if(chat_message !== ''){
+        element.disabled = true;
+        let formData = {
+            sender_user_id : userData._id,
+            receiver_user_id : receiver_user_id,
+            msg : chat_message
+        };
+        const response = await fetch(`/sendChat`, {
+            method : 'POST',
+            headers : {
+                'Content-Type' : 'application/json'
+            },
+            body : JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if(data.success){
+            element.disabled = false;
+            chat_message_element.value = '';
+            //let chatConversionElement = document.getElementById('chat_conversion');
+            //chatConversionElement.innerHTML = chatConversionElement.innerHTML + senderMessageTemplate(chat_message, userData.image, userData.first_name, userData.last_name, getCurrentDateTime());
+        }
+    }
+}
+
+function senderMessageTemplate(message, image, first_name, last_name, datetime){
+    let html = `
+    <div class="card text-white bg-info mb-3 w-75 float-end">
+        <div class="card-body">${message}</div>
+        <div class="card-footer text-white text-end">
+            <small>
+                <img src="/uploads/${image}" width="25" class="rounded-circle me-2" />
+                <b>${first_name} ${last_name}</b> on ${datetime}
+            </small>
+        </div>
+    </div>
+    `;
+    return html;
+}
+
+function receiverMessageTemplate(message, image, first_name, last_name, datetime){
+    html = `
+    <div class="card text-white bg-dark mb-3 w-75">
+        <div class="card-body">${message}</div>
+        <div class="card-footer text-muted text-end">
+            <small>
+                <img src="/uploads/${image}" width="25" class="rounded-circle me-2" />
+                <b>${first_name} ${last_name}</b> on ${datetime}
+            </small>
+        </div>
+    </div>
+    `;
+    return html;
+}
+
+async function fetchChatData(receiver_user_id){
+    let formData = {
+        sender_user_id : userData._id,
+        receiver_user_id : receiver_user_id,
+        last_chat_datetime : last_chat_datetime
+    };
+
+    let html = '';
+
+    const response = await fetch(`/fetchChat`, {
+        method : 'POST',
+        headers : {
+            'Content-Type' : 'application/json'
+        },
+        body : JSON.stringify(formData)
+    });
+
+    const data = await response.json();
+
+    if(data.length > 0){
+        console.log(data);
+        data.forEach(message => {
+            last_chat_datetime = message.datetime;
+            let datetime = setDateTimeFormdat(message.datetime);
+            if(message.chatAction === 'Send'){
+                html += senderMessageTemplate(message.message, userData.image, userData.first_name, userData.last_name, datetime);
+            } else {
+                html += receiverMessageTemplate(message.message, message.receiver_image, message.receiver_first_name, message.receiver_last_name, datetime);
+            }
+        });
+        console.log(html);
+        let chatConversionElement = document.getElementById('chat_conversion');
+        chatConversionElement.innerHTML = chatConversionElement.innerHTML + html;
+        scroll_top();
+    }
+}
+
+function getCurrentDateTime(){
+    const currentDate = new Date();
+    return currentDate.toISOString();
+}
+
+function setDateTimeFormdat(date){
+    date = new Date(date);
+    const options = { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: 'numeric', 
+        minute: 'numeric', 
+        second: 'numeric', 
+        hour12: true, 
+        //timeZoneName: 'short' 
+    };
+
+    return new Intl.DateTimeFormat('en-US', options).format(date);
+}
+
+function scroll_top()
+{
+    let chatConversionElement = document.getElementById('chat_conversion');
+    chatConversionElement.scrollTop = chatConversionElement.scrollHeight;
+}
+
+</script>
